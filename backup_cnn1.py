@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import time
 
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -38,15 +39,6 @@ def imshow(img):
     npimg = img.numpy()
     plt.imshow(np.transpose(npimg, (1, 2, 0)))
     plt.show()
-
-#this is a preliminary confidence score based on how far apart the top two values are
-def confidence_score(probabilities):
-    """Computes a confidence score based on the top-2 probabilities."""
-    top_prob = probabilities[0, 0].item()  # Highest probability
-    second_prob = probabilities[0, 1].item()  # Second highest probability
-    confidence = top_prob - second_prob  # Difference as a confidence score
-    return confidence
-
 
 class Net(nn.Module):
     def __init__(self):
@@ -225,24 +217,13 @@ if __name__ == "__main__":
 
         images_cuda = images.to(device)
         outputs = net(images_cuda)
-        probabilities = torch.softmax(outputs, dim=1)  # Convert logits to probabilities
-        sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
+        _, predicted = torch.max(outputs, 1)
 
-        # Compute confidence score for each image
-        confidence_scores = [confidence_score(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs))]
-
-
-        print("Ranked Predictions with Confidence:")
-        for i in range(4):  # Loop over batch
-            print(f"Image {i+1}:")
-            for rank, (index, prob) in enumerate(zip(sorted_indices[i], sorted_probs[i]), start=1):
-                print(f"  Rank {rank}: {classes[index]} ({prob:.2%} confidence)")
-
+        print('Predicted: ', ' '.join(f'{classes[predicted[j]]:5s}'
+                                    for j in range(4)))
 
         correct = 0
         total = 0
-        total_confidence = 0  # Store confidence scores
-
         # since we're not training, we don't need to calculate the gradients for our outputs
         with torch.no_grad():
             for data in testloader:
@@ -251,25 +232,12 @@ if __name__ == "__main__":
                 images_cuda = images.to(device)
                 labels_cuda = labels.to(device)
                 outputs = net(images_cuda)
-
-                # Convert logits to probabilities
-                probabilities = torch.softmax(outputs, dim=1)
-                sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
-
-                # Compute confidence scores
-                confidence_scores += sum(total_confidence(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs)))
-
                 # the class with the highest energy is what we choose as prediction
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels_cuda.size(0)
                 correct += (predicted == labels_cuda).sum().item()
 
-        # Compute **average confidence score**
-        average_confidence = total_confidence / total  # Using total, which already tracks the number of samples
-
-        # Print accuracy with **average confidence score**
-        print(f'Accuracy of the network on the test images: {100 * correct // total} % '
-        f'(Avg Confidence: {average_confidence:.2f})')
+        print(f'Accuracy of the network on the test images: {100 * correct // total} %')
 
         # prepare to count predictions for each class
         correct_pred = {classname: 0 for classname in classes}
@@ -294,6 +262,7 @@ if __name__ == "__main__":
         for classname, correct_count in correct_pred.items():
             accuracy = 100 * float(correct_count) / total_pred[classname]
             print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
-
+        
         end_time = time.time()
-        print(f"Execution Time: {end_time - start_time:.6f} seconds")
+
+        print(f"Total Time: {total_end - total_start:.6f} seconds")
