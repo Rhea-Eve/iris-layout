@@ -38,6 +38,15 @@ def imshow(img):
     plt.imshow(np.transpose(npimg, (1, 2, 0)))
     plt.show()
 
+#this is a preliminary confidence score based on how far apart the top two values are
+def confidence_score(probabilities):
+    """Computes a confidence score based on the top-2 probabilities."""
+    top_prob = probabilities[0, 0].item()  # Highest probability
+    second_prob = probabilities[0, 1].item()  # Second highest probability
+    confidence = top_prob - second_prob  # Difference as a confidence score
+    return confidence
+
+
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
@@ -213,10 +222,19 @@ if __name__ == "__main__":
 
         images_cuda = images.to(device)
         outputs = net(images_cuda)
-        _, predicted = torch.max(outputs, 1)
+        probabilities = torch.softmax(outputs, dim=1)  # Convert logits to probabilities
+        sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
 
-        print('Predicted: ', ' '.join(f'{classes[predicted[j]]:5s}'
-                                    for j in range(4)))
+        # Compute confidence score for each image
+        confidence_scores = [confidence_score(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs))]
+
+
+        print("Ranked Predictions with Confidence:")
+        for i in range(4):  # Loop over batch
+            print(f"Image {i+1}:")
+            for rank, (index, prob) in enumerate(zip(sorted_indices[i], sorted_probs[i]), start=1):
+                print(f"  Rank {rank}: {classes[index]} ({prob:.2%} confidence)")
+
 
         correct = 0
         total = 0
