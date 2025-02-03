@@ -257,7 +257,7 @@ if __name__ == "__main__":
                 sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
 
                 # Compute confidence scores
-                confidence_scores += sum(total_confidence(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs)))
+                total_confidence += sum(confidence_score(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs)))
 
                 # the class with the highest energy is what we choose as prediction
                 _, predicted = torch.max(outputs.data, 1)
