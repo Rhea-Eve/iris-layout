@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import iris_dataset
-import cifar
+#import cifar #NOTE: i dont think this is needed rn
 
 # Current strategy:
 #   Just try to tell between ff, logic, fill, other
@@ -41,24 +41,79 @@ def imshow(img):
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.conv1 = nn.Conv2d(3, 6, 5) 
+        #Input Channels (3): The model expects 3-channel input images (RGB).
+        #Output Channels (6): Produces 6 feature maps by applying 6 filters.
+        #Kernel Size (5): Each filter is 5x5 pixels.
+        #Operation: Extracts low-level features such as edges and textures. 
+
+        #Q what are we normalized to? what are the dimensions now?
+        
         self.pool = nn.MaxPool2d(2, 2)
+        #Pooling Type: Max Pooling.
+        # Kernel Size (2x2): Each pooling operation considers a 2x2 region.
+        # Stride (2): Moves the pooling window 2 pixels at a time.
+        # Operation: Reduces the spatial dimensions of the image by half (downsampling), retaining only the most prominent features.
+
+
         self.conv2 = nn.Conv2d(6, 16, 5)
+        #Input Channels (6): Takes the 6 feature maps produced by conv1.
+        #Output Channels (16): Produces 16 feature maps by applying 16 filters.
+        #Kernel Size (5): Each filter is 5x5 pixels.
+        #Operation: Extracts higher-level features from the downsampled data.
+
+
         #self.fc1 = nn.Linear(16 * 5 * 5, 120)
         self.fc1 = nn.Linear(1040, 120) # BUT WHY
+
+        #Input Features (1040): The flattened feature map from the convolutional and pooling layers.
+        #Reason for 1040: The dimensions of the feature map depend on the input image size, convolutional layer settings, and pooling steps.
+        #If the input image size is fixed, this value is manually calculated.
+        #Output Features (120): Projects the input into a 120-dimensional space for further processing.
+    
         self.fc2 = nn.Linear(120, 84)
+
+       # Input Features (120): Takes the 120 features from fc1.
+       # Output Features (84): Reduces dimensionality further.
+
         self.fc3 = nn.Linear(84, 3) # set to number of classes
 
+        # Input Features (84): Takes the features from fc2.
+        #Output Features (3): Outputs scores for 3 classes. Each score represents how likely the input belongs to a particular class.
+
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv1(x))) 
+        #Applies the first convolutional layer to the input tensor.
+        #Applies the ReLU activation function element-wise.
+
         x = self.pool(F.relu(self.conv2(x)))
+        #Applies the second convolutional layer to the tensor from the previous step.
+
         x = torch.flatten(x, 1) # flatten all dimensions except batch
+        #Converts the multi-dimensional tensor into a 1D tensor for fully connected layers.
+        #Flattening starts from the second dimension (1), leaving the batch dimension (0) intact.
+        #Input shape: [batch_size, 16, 5, 5].
+        #Output shape: [batch_size, 16 * 5 * 5] (e.g., [4, 400]).
+
         x = F.relu(self.fc1(x))
+
+        #Fully connected layer that transforms the flattened features into a 120-dimensional vector.
+        #Input shape: [batch_size, 400].
+        #Output shape: [batch_size, 120].
+        #Applies ReLU activation for non-linearity.
+
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
+        #Maps the 84-dimensional vector to 3 output scores, one for each class.
+        #Input shape: [batch_size, 84].
+        #Output shape: [batch_size, 3].
         return x
 
 if __name__ == "__main__":
+
+#Transforms: Prepares the input images for training by converting them to tensors and normalizing them.
+#Batch Size: Sets the number of samples per batch for training and testing to 4.
+
     transform = transforms.Compose(
         [transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -82,27 +137,36 @@ if __name__ == "__main__":
                                         download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                             shuffle=False, num_workers=2)
+    
+    #Loads the training and testing datasets using the custom iris_dataset class.
 
     classes = ('ff', 'logic', 'fill')
+
+    #DataLoader: Wraps the datasets for easy iteration in batches.
+    #Defines class labels.
+
 
     dataiter = iter(trainloader)
     images, labels = next(dataiter)
 
     # print images
     print('Image check: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(batch_size)))
-    imshow(torchvision.utils.make_grid(images))
+    #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
 
     if True:
         net = Net()
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         # Assuming that we are on a CUDA machine, this should print a CUDA device:
-        print(device)
+        print(f"this is the device {device}")
         net.to(device)
 
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss() #this is the loss function!!!! LogSoftmax and Negative Log-Likelihood Loss
         optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
+        #Training Loop
+
         for epoch in range(4):  # loop over the dataset multiple times
+            print(f"Entering epoch {epoch}")
 
             running_loss = 0.0
             for i, data in enumerate(trainloader, 0):
@@ -125,6 +189,10 @@ if __name__ == "__main__":
                     print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
                     running_loss = 0.0
 
+
+        #Logs the average loss every 2000 mini-batches.
+
+
         print('Finished Training')
 
         torch.save(net.state_dict(), PATH)
@@ -141,7 +209,7 @@ if __name__ == "__main__":
 
         # print images
         print('GroundTruth: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(4)))
-        imshow(torchvision.utils.make_grid(images))
+        #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
 
         images_cuda = images.to(device)
         outputs = net(images_cuda)
