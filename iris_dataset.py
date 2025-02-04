@@ -9,6 +9,7 @@ from PIL import Image
 from torchvision.datasets.vision import VisionDataset
 
 import cv2
+import torch
 
 class Iris(VisionDataset):
     """IRIS Dataset.
@@ -92,7 +93,12 @@ class Iris(VisionDataset):
         # to return a PIL Image
         #cv2.imshow("data", img)
         #cv2.waitKey(0)
-        img = Image.fromarray(img)
+        img = Image.fromarray(img).convert("L")  # Convert to grayscale
+        #img = Image.fromarray(img) #for rgb
+
+        # Get original image size. NOTE: this may need to be changed?
+        width, height = img.size
+        image_size = torch.tensor([width, height], dtype=torch.float32)
 
         if self.transform is not None:
             img = self.transform(img)
@@ -100,7 +106,7 @@ class Iris(VisionDataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        return img, target
+        return img, target, image_size
 
     def __len__(self) -> int:
         return len(self.data)

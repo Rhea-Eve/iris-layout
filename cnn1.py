@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import iris_dataset
-#import cifar #NOTE: i dont think this is needed rn
+#import cifar
 
 # Dataset generation notes
 #  For any brand new block, you need to extract an idealized PNG of the layout from design
@@ -68,7 +68,7 @@ def confidence_score(probabilities):
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5) 
+        self.conv1 = nn.Conv2d(1, 6, 5)  #changed to grey scale from self.conv1 = nn.Conv2d(3, 6, 5)  
         #Input Channels (3): The model expects 3-channel input images (RGB).
         #Output Channels (6): Produces 6 feature maps by applying 6 filters.
         #Kernel Size (5): Each filter is 5x5 pixels.
@@ -103,12 +103,18 @@ class Net(nn.Module):
        # Input Features (120): Takes the 120 features from fc1.
        # Output Features (84): Reduces dimensionality further.
 
-        self.fc3 = nn.Linear(84, 3) # set to number of classes
+
+        # Additional fully connected layer for image size (width & height)
+        self.size_fc = nn.Linear(2, 32)
+
+        # Final classification layer (concatenates image & size features)
+        self.fc3 = nn.Linear(84 + 32, 3)  
 
         # Input Features (84): Takes the features from fc2.
+        # Othe rinput (32): The result of the FCC for image size
         #Output Features (3): Outputs scores for 3 classes. Each score represents how likely the input belongs to a particular class.
 
-    def forward(self, x):
+    def forward(self, x, size):
         x = self.pool(F.relu(self.conv1(x))) 
         #Applies the first convolutional layer to the input tensor.
         #Applies the ReLU activation function element-wise.
@@ -130,6 +136,18 @@ class Net(nn.Module):
         #Applies ReLU activation for non-linearity.
 
         x = F.relu(self.fc2(x))
+
+        size = size.view(-1, 2)  # Ensure it always has batch dimension
+        size_features = F.relu(self.size_fc(size))
+        # Ensure correct batch size
+
+        if size_features.shape[0] != x.shape[0]:  
+            size_features = size_features.expand(x.shape[0], -1)  # Match batch size
+
+        #print(f"x.shape: {x.shape}, size_features.shape: {size_features.shape}")
+
+        x = torch.cat((x, size_features), dim=1)  # Now safe to concatenate
+
         x = self.fc3(x)
         #Maps the 84-dimensional vector to 3 output scores, one for each class.
         #Input shape: [batch_size, 84].
@@ -143,9 +161,12 @@ if __name__ == "__main__":
 #Transforms: Prepares the input images for training by converting them to tensors and normalizing them.
 #Batch Size: Sets the number of samples per batch for training and testing to 4.
 
-    transform = transforms.Compose(
-        [transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+    transform = transforms.Compose([
+        transforms.Grayscale(num_output_channels=1),  # Convert to grayscale
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))  # Adjust mean & std for single channel
+        #    transforms.Normalize((0.5,), (0.5,))  # Adjust mean & std for single channel
+    ])
 
     batch_size = 4
 
@@ -176,7 +197,7 @@ if __name__ == "__main__":
 
 
     dataiter = iter(trainloader)
-    images, labels = next(dataiter)
+    images, labels, image_sizes = next(dataiter)
 
     # print images
     print('Image check: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(batch_size)))
@@ -201,13 +222,16 @@ if __name__ == "__main__":
             for i, data in enumerate(trainloader, 0):
                 # get the inputs; data is a list of [inputs, labels]
                 # inputs, labels = data
-                inputs, labels = data[0].to(device), data[1].to(device)
+                #inputs, labels = data[0].to(device), data[1].to(device)
+                inputs, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
+
 
                 # zero the parameter gradients
                 optimizer.zero_grad()
 
                 # forward + backward + optimize
-                outputs = net(inputs)
+                outputs = net(inputs, image_sizes)
+
                 loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
@@ -234,14 +258,15 @@ if __name__ == "__main__":
         net.to(device)
 
         dataiter = iter(testloader)
-        images, labels = next(dataiter)
+        images, labels, image_sizes = next(dataiter)
 
         # print images
         print('GroundTruth: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(4)))
         #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
 
         images_cuda = images.to(device)
-        outputs = net(images_cuda)
+        image_sizes = data[2].to(device)  # Extract image sizes
+        outputs = net(images_cuda, image_sizes) #Added image sizes
         probabilities = torch.softmax(outputs, dim=1)  # Convert logits to probabilities
         sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
 
@@ -263,11 +288,13 @@ if __name__ == "__main__":
         # since we're not training, we don't need to calculate the gradients for our outputs
         with torch.no_grad():
             for data in testloader:
-                images, labels = data
+                #images, labels = data
+                images, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
+                outputs = net(images, image_sizes)
                 # calculate outputs by running images through the network
                 images_cuda = images.to(device)
                 labels_cuda = labels.to(device)
-                outputs = net(images_cuda)
+                #outputs = net(images_cuda)
 
                 # Convert logits to probabilities
                 probabilities = torch.softmax(outputs, dim=1)
@@ -295,22 +322,29 @@ if __name__ == "__main__":
         # again no gradients needed
         with torch.no_grad():
             for data in testloader:
-                images, labels = data
-                images_cuda = images.to(device)
-                labels_cuda = labels.to(device)
-                outputs = net(images_cuda)
+                images, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
+
+                images_cuda = images.to(device) #can remove later
+                #labels_cuda = labels.to(device)
+                outputs = net(images_cuda, image_sizes)
                 _, predictions = torch.max(outputs, 1)
                 # collect the correct predictions for each class
                 for label, prediction in zip(labels_cuda, predictions):
                     if label == prediction:
-                        correct_pred[classes[label]] += 1
-                    total_pred[classes[label]] += 1
+                        correct_pred[classes[label.item()]] += 1
+                    total_pred[classes[label.item()]] += 1
 
 
         # print accuracy for each class
         for classname, correct_count in correct_pred.items():
-            accuracy = 100 * float(correct_count) / total_pred[classname]
-            print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
+            # print accuracy for each class
+            for classname, correct_count in correct_pred.items():
+                if total_pred[classname] == 0:  # Prevent division by zero
+                    print(f'Accuracy for class: {classname:5s} is N/A (No samples)')
+                else:
+                    accuracy = 100 * float(correct_count) / total_pred[classname]
+                    print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
+
 
         end_time = time.time()
         print(f"Execution Time: {end_time - start_time:.6f} seconds")
