@@ -330,6 +330,7 @@ if __name__ == "__main__":
                 _, predictions = torch.max(outputs, 1)
                 # collect the correct predictions for each class
                 for label, prediction in zip(labels_cuda, predictions):
+                    print ("running once")
                     if label == prediction:
                         correct_pred[classes[label.item()]] += 1
                     total_pred[classes[label.item()]] += 1
@@ -346,5 +347,6 @@ if __name__ == "__main__":
                     print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
 
 
-        end_time = time.time()
+        end_time = time.time() 
         print(f"Execution Time: {end_time - start_time:.6f} seconds")
+
