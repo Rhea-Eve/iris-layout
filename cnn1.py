@@ -11,6 +11,8 @@ import numpy as np
 
 import iris_dataset
 #import cifar
+from collections import Counter
+
 
 # Dataset generation notes
 #  For any brand new block, you need to extract an idealized PNG of the layout from design
@@ -192,8 +194,37 @@ if __name__ == "__main__":
 
     classes = ('ff', 'logic', 'fill')
 
+    
+
+    train_counts = Counter(trainset.targets)
+    print("\nTraining Data Distribution:")
+    for idx, count in train_counts.items():
+        print(f"  {classes[idx]:5s}: {count} samples")
+
+    test_counts = Counter(testset.targets)
+    print("\nTesting Data Distribution:")
+    for idx, count in test_counts.items():
+        print(f"  {classes[idx]:5s}: {count} samples")
+
     #DataLoader: Wraps the datasets for easy iteration in batches.
     #Defines class labels.
+
+        # Step 1: Compute class weights
+    total_samples = sum(train_counts.values())
+
+    class_weights = []
+
+    for i in range(len(classes)):
+        count = train_counts.get(i, 1)  # fallback to 1 to avoid divide-by-zero
+        weight = total_samples / count
+        class_weights.append(weight)
+
+    # Normalize the weights so they sum to 1
+    class_weights = torch.tensor(class_weights, dtype=torch.float)
+    class_weights = class_weights ** 2
+    #class_weights = class_weights / class_weights.sum()
+    print("Weights::", class_weights)
+
 
 
     dataiter = iter(trainloader)
@@ -210,7 +241,7 @@ if __name__ == "__main__":
         print(f"this is the device {device}")
         net.to(device)
 
-        criterion = nn.CrossEntropyLoss() #this is the loss function!!!! LogSoftmax and Negative Log-Likelihood Loss
+        criterion = nn.CrossEntropyLoss(weight=class_weights) #this is the loss function!!!! LogSoftmax and Negative Log-Likelihood Loss
         optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
         #Training Loop
@@ -293,7 +324,7 @@ if __name__ == "__main__":
                 outputs = net(images, image_sizes)
                 # calculate outputs by running images through the network
                 images_cuda = images.to(device)
-                labels_cuda = labels.to(device)
+                #labels_cuda = labels.to(device)
                 #outputs = net(images_cuda)
 
                 # Convert logits to probabilities
@@ -305,8 +336,8 @@ if __name__ == "__main__":
 
                 # the class with the highest energy is what we choose as prediction
                 _, predicted = torch.max(outputs.data, 1)
-                total += labels_cuda.size(0)
-                correct += (predicted == labels_cuda).sum().item()
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
 
         # Compute **average confidence score**
         average_confidence = total_confidence / total  # Using total, which already tracks the number of samples
@@ -329,8 +360,7 @@ if __name__ == "__main__":
                 outputs = net(images_cuda, image_sizes)
                 _, predictions = torch.max(outputs, 1)
                 # collect the correct predictions for each class
-                for label, prediction in zip(labels_cuda, predictions):
-                    print ("running once")
+                for label, prediction in zip(labels, predictions):
                     if label == prediction:
                         correct_pred[classes[label.item()]] += 1
                     total_pred[classes[label.item()]] += 1
@@ -339,12 +369,11 @@ if __name__ == "__main__":
         # print accuracy for each class
         for classname, correct_count in correct_pred.items():
             # print accuracy for each class
-            for classname, correct_count in correct_pred.items():
-                if total_pred[classname] == 0:  # Prevent division by zero
-                    print(f'Accuracy for class: {classname:5s} is N/A (No samples)')
-                else:
-                    accuracy = 100 * float(correct_count) / total_pred[classname]
-                    print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
+            if total_pred[classname] == 0:  # Prevent division by zero
+                print(f'Accuracy for class: {classname:5s} is N/A (No samples)')
+            else:
+                accuracy = 100 * float(correct_count) / total_pred[classname]
+                print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
 
 
         end_time = time.time() 

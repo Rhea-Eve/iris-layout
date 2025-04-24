@@ -195,6 +195,25 @@ if __name__ == "__main__":
     from collections import Counter
 
     train_counts = Counter(trainset.targets)
+
+    # Step 1: Compute class weights
+    total_samples = sum(train_counts.values())
+
+    class_weights = []
+
+    for i in range(len(classes)):
+        count = train_counts.get(i, 1)  # fallback to 1 to avoid divide-by-zero
+        weight = total_samples / count
+        class_weights.append(weight)
+
+    # Normalize the weights so they sum to 1
+    class_weights = torch.tensor(class_weights, dtype=torch.float)
+    class_weights = class_weights ** 2
+    #class_weights = class_weights / class_weights.sum()
+    print("Weights::", class_weights)
+
+
+
     print("\nTraining Data Distribution:")
     for idx, count in train_counts.items():
         print(f"  {classes[idx]:5s}: {count} samples")
@@ -226,7 +245,11 @@ if __name__ == "__main__":
         print(f"this is the device {device}")
         net.to(device)
 
-        criterion = nn.CrossEntropyLoss() #this is the loss function!!!! LogSoftmax and Negative Log-Likelihood Loss
+        class_weights = class_weights.to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights) 
+        #this is the loss function!!!! LogSoftmax and Negative Log-Likelihood Loss
+        #we jsut added in the weighted loss function!
+
         optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
         #Training Loop
