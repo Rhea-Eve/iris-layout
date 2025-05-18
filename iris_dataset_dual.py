@@ -19,6 +19,35 @@ class IrisDualView(VisionDataset):
         download: bool = False,
     ):
         super().__init__(root, transform=transform, target_transform=target_transform)
+        if self.train:
+            file_bases = ['housekeeping-poly', 'silife-poly']
+        else:
+            file_bases = ['wrapped_snn_network-poly']
+
+        self.data_0 = []
+        self.data_90 = []
+        self.targets = []
+
+        for base in file_bases:
+            with open(os.path.join(root, f"{base}.pkl"), "rb") as f:
+                entry_0 = pickle.load(f, encoding="latin1")
+                self.data_0.extend(entry_0["data"])
+                self.targets.extend(entry_0["labels"])
+
+        with open(os.path.join(root, f"{base}_psi90.pkl"), "rb") as f:
+            entry_90 = pickle.load(f, encoding="latin1")
+            self.data_90.extend(entry_90["data"])
+
+        # Sanity check
+        assert len(self.data_0) == len(self.data_90) == len(self.targets), "Mismatched dataset lengths"
+
+        # Load class labels from any of the meta files (they're the same)
+        meta_file = os.path.join(root, f"{file_bases[0]}.meta")
+        with open(meta_file, "rb") as meta_f:
+            meta = pickle.load(meta_f, encoding="latin1")
+            self.classes = meta["label_names"]
+        self.class_to_idx = {name: i for i, name in enumerate(self.classes)}
+
 
         self.train = train
         self.data_0: Any = []

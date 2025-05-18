@@ -5,11 +5,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import time
-
+import pickle
+from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-import iris_dataset
+from iris_dataset import Iris
 #import cifar
 from collections import Counter
 
@@ -160,9 +161,8 @@ if __name__ == "__main__":
     start_time = time.time()
 
 
-#Transforms: Prepares the input images for training by converting them to tensors and normalizing them.
-#Batch Size: Sets the number of samples per batch for training and testing to 4.
-
+    #Transforms: Prepares the input images for training by converting them to tensors and normalizing them.
+    #Batch Size: Sets the number of samples per batch for training and testing to 4.
     transform = transforms.Compose([
         transforms.Grayscale(num_output_channels=1),  # Convert to grayscale
         transforms.ToTensor(),
@@ -171,30 +171,26 @@ if __name__ == "__main__":
     ])
 
     batch_size = 4
-
     #debugset = cifar.CIFAR10(root='./data', train=True, download=True, transform=transform)
     #debugloader = torch.utils.data.DataLoader(debugset, batch_size=batch_size, shuffle=True, num_workers=2)
-    import pickle
-    from typing import Any
+
     data: Any = []
     targets = []
 
-    trainset = iris_dataset.Iris(root='./imaging', train=True,
+    trainset = Iris(root='./data/imaging', train=True,
                                             download=True, transform=transform)
     print(len(trainset.classes))
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
                                             shuffle=True, num_workers=2)
 
-    testset = iris_dataset.Iris(root='./imaging', train=False,
+    testset = Iris(root='./data/imaging', train=False,
                                         download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                             shuffle=False, num_workers=2)
     
     #Loads the training and testing datasets using the custom iris_dataset class.
-
     classes = ('ff', 'logic', 'fill')
 
-    
 
     train_counts = Counter(trainset.targets)
     print("\nTraining Data Distribution:")
@@ -209,7 +205,7 @@ if __name__ == "__main__":
     #DataLoader: Wraps the datasets for easy iteration in batches.
     #Defines class labels.
 
-        # Step 1: Compute class weights
+    # Step 1: Compute class weights
     total_samples = sum(train_counts.values())
 
     class_weights = []
@@ -378,4 +374,3 @@ if __name__ == "__main__":
 
         end_time = time.time() 
         print(f"Execution Time: {end_time - start_time:.6f} seconds")
-

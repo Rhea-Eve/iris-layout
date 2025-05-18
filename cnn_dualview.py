@@ -179,11 +179,11 @@ if __name__ == "__main__":
     data: Any = []
     targets = []
 
-    trainset = IrisDualView(root='./imaging-jan26', train=True, transform=transform)
+    trainset = IrisDualView(root='data/imaging-jan26', train=True, transform=transform)
     print(len(trainset.classes))
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    testset = IrisDualView(root='./imaging-jan26', train=False, transform=transform)
+    testset = IrisDualView(root='data/imaging-jan26', train=False, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
     
     #Loads the training and testing datasets using the custom iris_dataset class.
@@ -304,7 +304,7 @@ if __name__ == "__main__":
         #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
 
         images_cuda = images.to(device)
-        image_sizes = data[2].to(device)  # Extract image sizes
+        image_sizes = image_sizes.to(device)  # Extract image sizes
         outputs = net(images_cuda, image_sizes) #Added image sizes
         probabilities = torch.softmax(outputs, dim=1)  # Convert logits to probabilities
         sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
