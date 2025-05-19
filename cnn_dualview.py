@@ -5,12 +5,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import time
-
+import pickle
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import Counter
 
-#import iris_dataset
+
+#import iris_dataset (from "datasets" folder)
 from iris_dataset_dual import IrisDualView
 #import cifar
 
@@ -65,6 +68,164 @@ def confidence_score(probabilities):
     second_prob = probabilities[0, 1].item()  # Second highest probability
     confidence = top_prob - second_prob  # Difference as a confidence score
     return confidence
+
+
+def set_weights(train_counts):
+    class_weights = []
+    total_samples = sum(train_counts.values())
+    for i in range(len(classes)):
+        count = train_counts.get(i, 1)  # fallback to 1 to avoid divide-by-zero
+        weight = total_samples / count
+        class_weights.append(weight)
+
+    # Normalize the weights so they sum to 1
+    class_weights = torch.tensor(class_weights, dtype=torch.float)
+    class_weights = class_weights ** 2
+    #class_weights = class_weights / class_weights.sum()
+
+    return class_weights
+
+
+def training(net, class_weights):
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    # Assuming that we are on a CUDA machine, this should print a CUDA device:
+    print(f"this is the device {device}")
+    net.to(device)
+
+    class_weights = class_weights.to(device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights) 
+    #this is the loss function!!!! LogSoftmax and Negative Log-Likelihood Loss
+    #we jsut added in the weighted loss function!
+
+    optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+
+    #Training Loop
+
+    for epoch in range(4):  # loop over the dataset multiple times
+        print(f"Entering epoch {epoch}")
+
+        running_loss = 0.0
+        for i, data in enumerate(trainloader, 0):
+            # get the inputs; data is a list of [inputs, labels]
+            # inputs, labels = data
+            #inputs, labels = data[0].to(device), data[1].to(device)
+            inputs, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
+
+
+            # zero the parameter gradients
+            optimizer.zero_grad()
+
+            # forward + backward + optimize
+            outputs = net(inputs, image_sizes)
+
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            # print statistics
+            running_loss += loss.item()
+            #Logs the average loss every 2000 mini-batches.
+            if i % 2000 == 1999:    # print every 2000 mini-batches
+                print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
+                running_loss = 0.0
+
+
+def testing(data):
+    if True:
+        net = Net()
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        # Assuming that we are on a CUDA machine, this should print a CUDA device:
+        print(device)
+        net.load_state_dict(torch.load(PATH, weights_only=True))
+        net.to(device)
+
+        dataiter = iter(testloader)
+        images, labels, image_sizes = next(dataiter)
+
+        # print images
+        print('GroundTruth: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(len(labels))))
+        #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
+
+        images_cuda = images.to(device)
+        image_sizes = image_sizes.to(device)  # Extract image sizes
+        outputs = net(images_cuda, image_sizes) #Added image sizes
+        probabilities = torch.softmax(outputs, dim=1)  # Convert logits to probabilities
+        sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
+
+        # Compute confidence score for each image
+        confidence_scores = [confidence_score(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs))]
+
+
+        batch_size = probabilities.shape[0]
+        for i in range(batch_size):
+            print(f"Image {i+1}:")
+            for rank, (index, prob) in enumerate(zip(sorted_indices[i], sorted_probs[i]), start=1):
+                print(f"  Rank {rank}: {classes[index]} ({prob:.2%} confidence)")
+
+
+        correct = 0
+        total = 0
+        total_confidence = 0  # Store confidence scores
+
+        # since we're not training, we don't need to calculate the gradients for our outputs
+        with torch.no_grad():
+            for data in testloader:
+                #images, labels = data
+                images, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
+                outputs = net(images, image_sizes)
+                # calculate outputs by running images through the network
+                images_cuda = images.to(device)
+                labels_cuda = labels.to(device)
+                #outputs = net(images_cuda)
+
+                # Convert logits to probabilities
+                probabilities = torch.softmax(outputs, dim=1)
+                sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
+
+                # Compute confidence scores
+                total_confidence += sum(confidence_score(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs)))
+
+                # the class with the highest energy is what we choose as prediction
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels_cuda.size(0)
+                correct += (predicted == labels_cuda).sum().item()
+
+        # Compute **average confidence score**
+        average_confidence = total_confidence / total  # Using total, which already tracks the number of samples
+
+        # Print accuracy with **average confidence score**
+        print(f'Accuracy of the network on the test images: {100 * correct // total} % '
+        f'(Avg Confidence: {average_confidence:.2f})')
+
+        # prepare to count predictions for each class
+        correct_pred = {classname: 0 for classname in classes}
+        total_pred = {classname: 0 for classname in classes}
+
+        # again no gradients needed
+        with torch.no_grad():
+            for data in testloader:
+                images, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
+
+
+                images_cuda = images.to(device) #can remove later
+                #labels_cuda = labels.to(device)
+                outputs = net(images_cuda, image_sizes)
+                _, predictions = torch.max(outputs, 1)
+                # collect the correct predictions for each class
+                for label, prediction in zip(labels, predictions):
+                    #print ("running once")
+                    if label == prediction:
+                        correct_pred[classes[label.item()]] += 1
+                    total_pred[classes[label.item()]] += 1
+
+
+        # print accuracy for each class
+        for classname, correct_count in correct_pred.items():
+            if total_pred[classname] == 0:  # Prevent division by zero
+                print(f'Accuracy for class: {classname:5s} is N/A (No samples)')
+            else:
+                accuracy = 100 * float(correct_count) / total_pred[classname]
+                print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
 
 
 class Net(nn.Module):
@@ -143,9 +304,6 @@ class Net(nn.Module):
         size_features = F.relu(self.size_fc(size))
         # Ensure correct batch size
 
-        if size_features.shape[0] != x.shape[0]:  
-            size_features = size_features.expand(x.shape[0], -1)  # Match batch size
-
         #print(f"x.shape: {x.shape}, size_features.shape: {size_features.shape}")
 
         x = torch.cat((x, size_features), dim=1)  # Now safe to concatenate
@@ -158,11 +316,12 @@ class Net(nn.Module):
 
 if __name__ == "__main__":
     start_time = time.time()
+    
+    batch_size = 4
+    classes = ('ff', 'logic', 'fill')
 
-
-#Transforms: Prepares the input images for training by converting them to tensors and normalizing them.
-#Batch Size: Sets the number of samples per batch for training and testing to 4.
-
+    #Transforms: Prepares the input images for training by converting them to tensors and normalizing them.
+    #Batch Size: Sets the number of samples per batch for training and testing to 4.
     transform = transforms.Compose([
         #transforms.Grayscale(num_output_channels=1),  # Convert to grayscale
         transforms.ToTensor(),
@@ -170,49 +329,28 @@ if __name__ == "__main__":
         #    transforms.Normalize((0.5,), (0.5,))  # Adjust mean & std for single channel
     ])
 
-    batch_size = 4
-
     #debugset = cifar.CIFAR10(root='./data', train=True, download=True, transform=transform)
     #debugloader = torch.utils.data.DataLoader(debugset, batch_size=batch_size, shuffle=True, num_workers=2)
-    import pickle
-    from typing import Any
+
     data: Any = []
     targets = []
 
-    trainset = IrisDualView(root='data/imaging-jan26', train=True, transform=transform)
+    trainset = IrisDualView(root='./data/imaging-jan26', train=True, transform=transform)
     print(len(trainset.classes))
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    testset = IrisDualView(root='data/imaging-jan26', train=False, transform=transform)
+    testset = IrisDualView(root='./data/imaging-jan26', train=False, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
     
-    #Loads the training and testing datasets using the custom iris_dataset class.
-
-    classes = ('ff', 'logic', 'fill')
-
-    #print info on the data set
-
-    from collections import Counter
-
+    #Prints info on the data set
     train_counts = Counter(trainset.targets)
 
-    # Step 1: Compute class weights
-    total_samples = sum(train_counts.values())
+    # Compute class weights
+    class_weights = [1]* (len(classes)) #Defult
 
-    class_weights = []
-
-    for i in range(len(classes)):
-        count = train_counts.get(i, 1)  # fallback to 1 to avoid divide-by-zero
-        weight = total_samples / count
-        class_weights.append(weight)
-
-    # Normalize the weights so they sum to 1
-    class_weights = torch.tensor(class_weights, dtype=torch.float)
-    class_weights = class_weights ** 2
-    #class_weights = class_weights / class_weights.sum()
+    #This normilizes the weights so that we care also about the categories that we dont hae data for!
+    class_weights = set_weights(train_counts) 
     print("Weights::", class_weights)
-
-
 
     print("\nTraining Data Distribution:")
     for idx, count in train_counts.items():
@@ -223,12 +361,8 @@ if __name__ == "__main__":
     for idx, count in test_counts.items():
         print(f"  {classes[idx]:5s}: {count} samples")
 
-
-
-
     #DataLoader: Wraps the datasets for easy iteration in batches.
     #Defines class labels.
-
 
     dataiter = iter(trainloader)
     images, labels, image_sizes = next(dataiter)
@@ -240,150 +374,14 @@ if __name__ == "__main__":
 
     if True:
         net = Net()
-        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        # Assuming that we are on a CUDA machine, this should print a CUDA device:
-        print(f"this is the device {device}")
-        net.to(device)
 
-        class_weights = class_weights.to(device)
-        criterion = nn.CrossEntropyLoss(weight=class_weights) 
-        #this is the loss function!!!! LogSoftmax and Negative Log-Likelihood Loss
-        #we jsut added in the weighted loss function!
-
-        optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
-
-        #Training Loop
-
-        for epoch in range(4):  # loop over the dataset multiple times
-            print(f"Entering epoch {epoch}")
-
-            running_loss = 0.0
-            for i, data in enumerate(trainloader, 0):
-                # get the inputs; data is a list of [inputs, labels]
-                # inputs, labels = data
-                #inputs, labels = data[0].to(device), data[1].to(device)
-                inputs, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
-
-
-                # zero the parameter gradients
-                optimizer.zero_grad()
-
-                # forward + backward + optimize
-                outputs = net(inputs, image_sizes)
-
-                loss = criterion(outputs, labels)
-                loss.backward()
-                optimizer.step()
-
-                # print statistics
-                running_loss += loss.item()
-                if i % 2000 == 1999:    # print every 2000 mini-batches
-                    print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
-                    running_loss = 0.0
-
-
-        #Logs the average loss every 2000 mini-batches.
-
+        training(net, class_weights)
 
         print('Finished Training')
 
         torch.save(net.state_dict(), PATH)
-    if True:
-        net = Net()
-        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        # Assuming that we are on a CUDA machine, this should print a CUDA device:
-        print(device)
-        net.load_state_dict(torch.load(PATH, weights_only=True))
-        net.to(device)
 
-        dataiter = iter(testloader)
-        images, labels, image_sizes = next(dataiter)
-
-        # print images
-        print('GroundTruth: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(4)))
-        #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
-
-        images_cuda = images.to(device)
-        image_sizes = image_sizes.to(device)  # Extract image sizes
-        outputs = net(images_cuda, image_sizes) #Added image sizes
-        probabilities = torch.softmax(outputs, dim=1)  # Convert logits to probabilities
-        sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
-
-        # Compute confidence score for each image
-        confidence_scores = [confidence_score(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs))]
-
-
-        print("Ranked Predictions with Confidence:")
-        for i in range(4):  # Loop over batch
-            print(f"Image {i+1}:")
-            for rank, (index, prob) in enumerate(zip(sorted_indices[i], sorted_probs[i]), start=1):
-                print(f"  Rank {rank}: {classes[index]} ({prob:.2%} confidence)")
-
-
-        correct = 0
-        total = 0
-        total_confidence = 0  # Store confidence scores
-
-        # since we're not training, we don't need to calculate the gradients for our outputs
-        with torch.no_grad():
-            for data in testloader:
-                #images, labels = data
-                images, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
-                outputs = net(images, image_sizes)
-                # calculate outputs by running images through the network
-                images_cuda = images.to(device)
-                labels_cuda = labels.to(device)
-                #outputs = net(images_cuda)
-
-                # Convert logits to probabilities
-                probabilities = torch.softmax(outputs, dim=1)
-                sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
-
-                # Compute confidence scores
-                total_confidence += sum(confidence_score(sorted_probs[i].unsqueeze(0)) for i in range(len(sorted_probs)))
-
-                # the class with the highest energy is what we choose as prediction
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels_cuda.size(0)
-                correct += (predicted == labels_cuda).sum().item()
-
-        # Compute **average confidence score**
-        average_confidence = total_confidence / total  # Using total, which already tracks the number of samples
-
-        # Print accuracy with **average confidence score**
-        print(f'Accuracy of the network on the test images: {100 * correct // total} % '
-        f'(Avg Confidence: {average_confidence:.2f})')
-
-        # prepare to count predictions for each class
-        correct_pred = {classname: 0 for classname in classes}
-        total_pred = {classname: 0 for classname in classes}
-
-        # again no gradients needed
-        with torch.no_grad():
-            for data in testloader:
-                images, labels, image_sizes = data[0].to(device), data[1].to(device), data[2].to(device)
-
-                images_cuda = images.to(device) #can remove later
-                #labels_cuda = labels.to(device)
-                outputs = net(images_cuda, image_sizes)
-                _, predictions = torch.max(outputs, 1)
-                # collect the correct predictions for each class
-                for label, prediction in zip(labels, predictions):
-                    #print ("running once")
-                    if label == prediction:
-                        correct_pred[classes[label.item()]] += 1
-                    total_pred[classes[label.item()]] += 1
-
-
-        # print accuracy for each class
-        for classname, correct_count in correct_pred.items():
-            if total_pred[classname] == 0:  # Prevent division by zero
-                print(f'Accuracy for class: {classname:5s} is N/A (No samples)')
-            else:
-                accuracy = 100 * float(correct_count) / total_pred[classname]
-                print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
-
+        testing(data)
 
         end_time = time.time() 
         print(f"Execution Time: {end_time - start_time:.6f} seconds")
-
