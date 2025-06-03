@@ -1,19 +1,22 @@
+print("tourch")
 import torch
-import torchvision
+#import torchvision
+print("tourch vision")
 import torchvision.transforms as transforms
+print("tourch.nm")
 import torch.nn as nn
+print("tourch.nm.functional")
 import torch.nn.functional as F
+print("tourch.optim")
 import torch.optim as optim
+("time")
 import time
-import pickle
+#import pickle
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import Counter
-
-
-
 
 
 #import iris_dataset (from "datasets" folder)
@@ -67,9 +70,8 @@ def imshow(img):
 #this is a preliminary confidence score based on how far apart the top two values are
 def confidence_score(probabilities):
     """Computes a confidence score based on the top-2 probabilities."""
-    top_prob = probabilities[0, 0].item()  # Highest probability
-    second_prob = probabilities[0, 1].item()  # Second highest probability
-    confidence = top_prob - second_prob  # Difference as a confidence score
+    top2 = torch.topk(probabilities[0], k=2).values
+    confidence = top2[0].item() - top2[1].item()
     return confidence
 
 
@@ -274,7 +276,7 @@ class Net(nn.Module):
         self.size_fc = nn.Linear(2, 32)
 
         # Final classification layer (concatenates image & size features)
-        self.fc3 = nn.Linear(84 + 32, 3)  
+        self.fc3 = nn.Linear(84 + 32, len(classes))  
 
         # Input Features (84): Takes the features from fc2.
         # Othe rinput (32): The result of the FCC for image size
@@ -318,10 +320,27 @@ class Net(nn.Module):
         return x
 
 if __name__ == "__main__":
+    print("in main!")
+
     start_time = time.time()
     
     batch_size = 4
-    classes = ('ff', 'logic', 'fill')
+    classes = [
+    'inv_buf',
+    'filler',
+    'ff',
+    'latch',
+    'xor',
+    'and',
+    'or',
+    'aoi',
+    'oai',
+    'mux',
+    'delay',
+    'arith',
+    'misc',
+    'unknown']
+
 
     #Transforms: Prepares the input images for training by converting them to tensors and normalizing them.
     #Batch Size: Sets the number of samples per batch for training and testing to 4.
@@ -338,13 +357,16 @@ if __name__ == "__main__":
     data: Any = []
     targets = []
 
-    trainset = IrisDualView(root='./data/imaging-jan26', train=True, transform=transform)
+    print("about to load data")
+
+    trainset = IrisDualView(root='./data/imaging-extended', train=True, transform=transform)
     print(len(trainset.classes))
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    testset = IrisDualView(root='./data/imaging-jan26', train=False, transform=transform)
+    testset = IrisDualView(root='./data/imaging-extended', train=False, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
     
+    print("loaded data")
     #Prints info on the data set
     train_counts = Counter(trainset.targets)
 
@@ -354,6 +376,8 @@ if __name__ == "__main__":
     #This normilizes the weights so that we care also about the categories that we dont hae data for!
     class_weights = set_weights(train_counts) 
     print("Weights::", class_weights)
+
+    print("weights set")
 
     print("\nTraining Data Distribution:")
     for idx, count in train_counts.items():
@@ -375,6 +399,7 @@ if __name__ == "__main__":
     print('Image check: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(batch_size)))
     #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
 
+    print("training")
     if True:
         net = Net()
 
