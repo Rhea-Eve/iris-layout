@@ -18,6 +18,8 @@ from prims import Rect, Point
 # and facts and expressed it in my own style.
 
 DEF_TO_PIXELS_VERSION = '1.0.0'
+SMALL_THRESH = 150
+INSITU_THRESH = 10*10
 
 class Leaf():
     def __init__(self, d, name):
@@ -95,18 +97,19 @@ class Design():
                         skip = False
                         for token in tokens:
                             if comp_state == 'SEARCH':
-                                if token == 'PLACED' or token == 'FIXED':
+                                if token == 'PLACED' or token == 'FIXED' or token == 'COVER':
                                     comp_state = 'PLACED'
                                 elif token == 'SOURCE':
                                     comp_state = 'SOURCE'
-                                elif token == ';':
-                                    if not skip:
-                                        self.schema['cells'][name] = {
-                                            'cell': cell,
-                                            'loc' : [x, y],
-                                            'orientation' : orientation
-                                        }
-                                    comp_state = 'END'
+                                # Commented out because not all cells of interest end in a ';'
+                                # elif token == ';':
+                                #     if not skip:
+                                #         self.schema['cells'][name] = {
+                                #             'cell': cell,
+                                #             'loc' : [x, y],
+                                #             'orientation' : orientation
+                                #         }
+                                #     comp_state = 'END'
                             elif comp_state == 'PLACED':
                                 assert token == '('
                                 comp_state = 'PLACED_X'
@@ -121,7 +124,16 @@ class Design():
                                 comp_state = 'PLACED_ORIENTATION'
                             elif comp_state == 'PLACED_ORIENTATION':
                                 orientation = token
-                                comp_state = 'SEARCH'
+                                # Added because PLACED_ORIENTATION is by fiat the last item in the description
+                                # and at least for the .def files we're interested in parsing, it is consistent.
+                                if not skip:
+                                    self.schema['cells'][name] = {
+                                        'cell': cell,
+                                        'loc' : [x, y],
+                                        'orientation' : orientation
+                                    }
+                                comp_state = 'END'
+                                # comp_state = 'SEARCH'
 
                             elif comp_state == 'SOURCE':
                                 if token != 'DIST' and token != 'NETLIST':
@@ -329,17 +341,28 @@ class Design():
             0x22 : 'GENERATIONS',
             0x23 : 'ATTRATABLE',
             0x26 : 'ELFLAGS',
+            0x27 : 'ELKEY',
+            0x28 : 'LINKTYPE',
+            0x29 : 'LINKKEYS',
             0x2A : 'NODETYPE',
             0x2B : 'PROPATTR',
             0x2C : 'PROPVALUE',
             0x2D : 'BOX',
             0x2E : 'BOXTYPE',
             0x2F : 'PLEX',
+            0x30 : 'BGNEXTN',
+            0x31 : 'ENDEXTN',
             0x32 : 'TAPENUM',
             0x33 : 'TAPECODE',
+            0x34 : 'STRCLASS',
             0x36 : 'FORMAT',
             0x37 : 'MASK',
-            0x38 : 'ENDMASKS'
+            0x38 : 'ENDMASKS',
+            0x39 : 'LIBDIRSIZE',
+            0x3A : 'SRFNAME',
+            0x3B : 'LIBSECUR',
+            0x5A : 'RAITHMBMSPATH',
+            0x62 : 'RAITHPXXDATA'
         }
         self.design_json = self.df.with_name(self.df.stem + '.json')
         if not self.design_json.is_file():
@@ -356,6 +379,8 @@ class Design():
             else:
                 logging.error(f"Unhandled design extension {self.extension}")
                 assert False
+            with open(self.design_json, 'r') as db_file:
+                self.schema = json.loads(db_file.read())
         else:
             with open(self.design_json, 'r') as db_file:
                 self.schema = json.loads(db_file.read())
@@ -364,8 +389,10 @@ class Design():
         die_ur = self.schema['die_area_ur']
         die = Rect(Point(die_ll[0], die_ll[1]), Point(die_ur[0], die_ur[1]))
         self.canvas = np.zeros((int(die.height() * self.pix_per_um), int(die.width() * self.pix_per_um), 3), dtype=np.uint8)
+        self.canvas_redact = np.zeros((int(die.height() * self.pix_per_um), int(die.width() * self.pix_per_um), 3), dtype=np.uint8)
         self.functions = np.zeros((int(die.height() * self.pix_per_um), int(die.width() * self.pix_per_um), 3), dtype=np.uint8)
         self.labels = np.zeros((int(die.height() * self.pix_per_um), int(die.width() * self.pix_per_um), 3), dtype=np.uint8)
+        self.insitu = np.zeros((int(die.height() * self.pix_per_um), int(die.width() * self.pix_per_um), 3), dtype=np.uint8)
 
     def render_layer(self, tech):
         do_progress = len(self.schema['cells'].keys()) > 1000
@@ -378,6 +405,7 @@ class Design():
             if do_progress:
                 progress.update(count)
             color = tech.pallette.str_to_rgb(data['cell'], data['orientation'])
+            cell_type = tech.map_name_to_celltype(data['cell'])
             loc = data['loc']
             try:
                 cell_size = tech.tech.schema['cells'][data['cell']]['size']
@@ -385,18 +413,32 @@ class Design():
                 missing_cells += [data]
                 continue
             if self.redact:
-                area = cell_size[1] * cell_size[0] * self.pix_per_um * self.pix_per_um
+                # noise added as an obfuscation measure to protect underlying std cell library details
+                area = cell_size[1] * cell_size[0] * self.pix_per_um * self.pix_per_um * random.uniform(0.7, 1.0) * 0.5
                 radius = ceil(sqrt(area / pi))
-                cv2.circle(
-                    self.canvas,
-                    (int(((loc[0] + (cell_size[0] // 2)) * self.pix_per_um)),
-                     int(((loc[1] + (cell_size[1] // 2)) * self.pix_per_um))
-                    ),
-                    radius,
-                    color,
-                    thickness=1,
-                )
+                if cell_type == 'fill':
+                    cv2.circle(
+                        self.canvas,
+                        (int(((loc[0] + (cell_size[0] // 2)) * self.pix_per_um)),
+                        int(((loc[1] + (cell_size[1] // 2)) * self.pix_per_um))
+                        ),
+                        radius,
+                        color,
+                        thickness=-1,
+                    )
+                else:
+                    cv2.circle(
+                        self.canvas_redact,
+                        (int(((loc[0] + (cell_size[0] // 2)) * self.pix_per_um)),
+                        int(((loc[1] + (cell_size[1] // 2)) * self.pix_per_um))
+                        ),
+                        radius,
+                        color,
+                        thickness=-1,
+                    )
             else:
+                if cell_size[0] * cell_size[1] > INSITU_THRESH:
+                    color = (22.0, 18.0, 18.0)
                 tl = (
                     int(loc[0] * self.pix_per_um),
                     int((loc[1] + cell_size[1]) * self.pix_per_um),
@@ -412,6 +454,32 @@ class Design():
                     color,
                     thickness = -1,
                 )
+                if cell_size[0] * cell_size[1] > INSITU_THRESH:
+                    font_scale = 0.5
+                    thickness = 1
+                    font_face = cv2.FONT_HERSHEY_SIMPLEX
+                    centroid = np.median([tl, br], axis=0)
+                    centroid = (int(centroid[0]), int(centroid[1]))
+                    expanded_name = data['cell']
+                    ((w, h), baseline) = cv2.getTextSize(expanded_name, font_face, font_scale, thickness)
+                    cv2.rectangle(
+                        self.insitu,
+                        (centroid[0] - w // 2, centroid[1] + baseline - h // 2),
+                        (centroid[0] - w // 2 + w, centroid[1] - h - baseline - h // 2),
+                        (255, 255, 255),
+                        thickness = -1,
+                        lineType = cv2.LINE_8
+                    )
+                    cv2.putText(
+                        self.insitu,
+                        expanded_name,
+                        (centroid[0] - w // 2, centroid[1] - h // 2),
+                        font_face,
+                        font_scale,
+                        color,
+                        thickness,
+                        bottomLeftOrigin=False
+                    )
         if do_progress:
             progress.finish()
         return missing_cells
@@ -523,6 +591,7 @@ class Design():
         cv2.copyTo(
             self.labels, self.labels, self.functions
         )
+        self.canvas = cv2.addWeighted(self.canvas, 1.0, self.insitu, 1.0, 0.0)
         return mc
 
     def generate_legend(self, tech):
@@ -530,6 +599,17 @@ class Design():
         tech.pallette.save(str(self.df.with_name(self.df.stem)) + '_pallette.json')
 
     def save_layout(self):
+        if self.redact:
+            mask = cv2.cvtColor(self.canvas_redact, cv2.COLOR_BGR2GRAY)
+            _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+            # Invert mask to get black areas
+            mask_inv = cv2.bitwise_not(mask)
+            # Black-out the area on bottom where top will be placed
+            bottom_bg = cv2.bitwise_and(self.canvas, self.canvas, mask=mask_inv)
+            # Take only the colored part of the top image
+            top_fg = cv2.bitwise_and(self.canvas_redact, self.canvas_redact, mask=mask)
+            # Combine the two
+            self.canvas = cv2.add(bottom_bg, top_fg)
         cv2.imwrite(str(self.df.with_name(self.df.stem + '.png')), self.canvas)
         cv2.imwrite(str(self.df.with_name(self.df.stem + '_function.png')), self.functions)
 
@@ -581,6 +661,7 @@ class Design():
             logging.warning(f"Couldn't merge sub-block {d.name} into {self.name}")
 
     def generate_missing(self, missing_cells, tm, function=False):
+        warned_cell = {}
         for missing_cell in missing_cells:
             def_file = self.design_path / (missing_cell['cell'] + '.def')
             if def_file.exists(): # prefer DEF over GDS
@@ -590,7 +671,10 @@ class Design():
                 if gds_file.exists():
                     d = Design(gds_file, self.pix_per_um)
                 else:
-                    logging.warning(f"Couldn't find design file for {missing_cell['cell']}")
+                    if missing_cell['cell'] not in warned_cell:
+                        warned_cell[missing_cell['cell']] = 1
+                    else:
+                        warned_cell[missing_cell['cell']] += 1
                     continue
             tm.gather_stats(d)
             if function:
@@ -600,6 +684,7 @@ class Design():
             if len(next_missing) > 0:
                 d.generate_missing(next_missing, tm, function)
             self.merge_subdesign(d, missing_cell, function)
+        logging.warning(f"Couldn't find design file for {warned_cell}")
 
     # build a hierarchy from the 'def' file. Relies on the hierarchy using '/' separators for cell names.
     # TODO: make the hierarchy separator dependent on the `tech` library
@@ -700,10 +785,16 @@ class Design():
                 self.clusters[path + '/' + k] = self.flatten_region(v)
             else:
                 # TODO: create special-case clustering rules dependent on the tech lib
-                if count > self.threshold or k == 'sce' or k == 'u__coresys_vexsys' or k == 'vextop':
+                if (count < SMALL_THRESH) and path + '_leaves' in self.clusters:
+                    # stick it into the previous hierarchy level's block
+                    self.clusters[path + '_leaves'] += self.flatten_region(v)
+                elif count > self.threshold or k == 'sce' or k == 'u__coresys_vexsys' or k == 'vextop' or k == 'u__gen_pers_bio':
                     self.recurse_cluster_hierarchy(v, path + '/' + k)
                 else:
-                    self.clusters[path + '/' + k] = self.flatten_region(v)
+                    if path + '/' + k in self.clusters:
+                        self.clusters[path + '/' + k] += self.flatten_region(v)
+                    else:
+                        self.clusters[path + '/' + k] = self.flatten_region(v)
 
     # prune small/misc leaves from the hierarchy by merging them into parents or a catch-all 'misc' key
     def merge_leaves(self):
@@ -725,7 +816,7 @@ class Design():
                 leaf_keys += [c]
         misc_cells = []
         for l in leaf_keys:
-            if len(self.clusters[l]) < 50:
+            if len(self.clusters[l]) < SMALL_THRESH:
                 misc_cells += self.clusters[l]
                 del self.clusters[l]
         self.clusters['misc'] = misc_cells
