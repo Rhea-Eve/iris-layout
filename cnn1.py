@@ -226,6 +226,11 @@ if __name__ == "__main__":
     dataiter = iter(trainloader)
     images, labels, image_sizes = next(dataiter)
 
+    train_losses = []
+    val_losses = []
+    num_epochs = 4  # or whatever you were using
+
+
     # print images
     print('Image check: ', ' '.join(f'{classes[labels[j]]:5s}' for j in range(batch_size)))
     #imshow(torchvision.utils.make_grid(images)) #commented out to run faster for testing
@@ -242,7 +247,7 @@ if __name__ == "__main__":
 
         #Training Loop
 
-        for epoch in range(4):  # loop over the dataset multiple times
+        for epoch in range(num_epochs):  # loop over the dataset multiple times
             print(f"Entering epoch {epoch}")
 
             running_loss = 0.0
@@ -269,11 +274,47 @@ if __name__ == "__main__":
                     print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
                     running_loss = 0.0
 
+            train_losses.append(running_loss / len(trainloader))
+
+            # Validation phase
+            net.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for val_data in testloader:
+                    val_inputs, val_labels, val_sizes = val_data[0].to(device), val_data[1].to(device), val_data[2].to(device)
+                    val_outputs = net(val_inputs, val_sizes)
+                    loss = criterion(val_outputs, val_labels)
+                    val_loss += loss.item()
+            val_losses.append(val_loss / len(testloader))
+
+
 
         #Logs the average loss every 2000 mini-batches.
 
 
         print('Finished Training')
+        # Plot and save training vs validation loss
+        epochs = list(range(1, len(train_losses) + 1))
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs, train_losses, label='Training Loss', linewidth=2)
+        plt.plot(epochs, val_losses, label='Validation Loss', linewidth=2)
+
+        colors = ['green', 'purple', 'orange']
+        for i, classname in enumerate(classes):
+            plt.plot(epochs, val_loss_per_class[classname], linestyle='--', color=colors[i], label=f'Val Loss ({classname})')
+
+        best_epoch = np.argmin(val_losses)
+        plt.scatter(epochs[best_epoch], val_losses[best_epoch], color='red', zorder=5, label='Best Val Epoch')
+
+        plt.title('Training vs Validation Loss (with Per-Class Breakdown)', fontsize=14)
+        plt.xlabel('Epoch', fontsize=12)
+        plt.ylabel('Loss', fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.4)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig('loss_curve_per_class.png', dpi=300)
+        plt.show()
+
 
         torch.save(net.state_dict(), PATH)
     if True:
