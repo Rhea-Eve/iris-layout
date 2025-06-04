@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import iris_dataset
-#import cifar #NOTE: i dont think this is needed rn
+#import cifar 
 
 # Current strategy:
 #   Just try to tell between ff, logic, fill, other

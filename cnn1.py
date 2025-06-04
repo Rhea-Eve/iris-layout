@@ -13,6 +13,9 @@ import numpy as np
 from iris_dataset import Iris
 #import cifar
 from collections import Counter
+from datetime import datetime
+import csv
+
 
 
 # Dataset generation notes
@@ -228,6 +231,8 @@ if __name__ == "__main__":
 
     train_losses = []
     val_losses = []
+    val_loss_per_class = {classname: [] for classname in classes}  # <-- new
+
     num_epochs = 4  # or whatever you were using
 
 
@@ -247,9 +252,48 @@ if __name__ == "__main__":
 
         #Training Loop
 
+                # --- Pre-training Evaluation (Epoch 0) ---
+        net.eval()
+
+        # --- Validation Loss ---
+        val_loss = 0.0
+        val_class_loss = {classname: [] for classname in classes}
+        with torch.no_grad():
+            for val_data in testloader:
+                val_inputs, val_labels, val_sizes = val_data[0].to(device), val_data[1].to(device), val_data[2].to(device)
+                val_outputs = net(val_inputs, val_sizes)
+                loss = criterion(val_outputs, val_labels)
+                val_loss += loss.item()
+                for i in range(len(val_labels)):
+                    label = val_labels[i].item()
+                    l = criterion(val_outputs[i].unsqueeze(0), val_labels[i].unsqueeze(0))
+                    val_class_loss[classes[label]].append(l.item())
+
+        val_losses.append(val_loss / len(testloader))
+        for classname in classes:
+            if val_class_loss[classname]:
+                avg = sum(val_class_loss[classname]) / len(val_class_loss[classname])
+            else:
+                avg = 0
+            val_loss_per_class[classname].append(avg)
+
+        # --- Training Loss ---
+        train_loss = 0.0
+        with torch.no_grad():
+            for train_data in trainloader:
+                train_inputs, train_labels, train_sizes = train_data[0].to(device), train_data[1].to(device), train_data[2].to(device)
+                train_outputs = net(train_inputs, train_sizes)
+                loss = criterion(train_outputs, train_labels)
+                train_loss += loss.item()
+
+        train_losses.append(train_loss / len(trainloader))
+
+        
+
         for epoch in range(num_epochs):  # loop over the dataset multiple times
             print(f"Entering epoch {epoch}")
 
+            epoch_loss = 0.0
             running_loss = 0.0
             for i, data in enumerate(trainloader, 0):
                 # get the inputs; data is a list of [inputs, labels]
@@ -268,24 +312,38 @@ if __name__ == "__main__":
                 loss.backward()
                 optimizer.step()
 
-                # print statistics
+                epoch_loss += loss.item()
                 running_loss += loss.item()
                 if i % 2000 == 1999:    # print every 2000 mini-batches
                     print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
                     running_loss = 0.0
+            
+            train_losses.append(epoch_loss / len(trainloader))
 
-            train_losses.append(running_loss / len(trainloader))
-
-            # Validation phase
             net.eval()
             val_loss = 0.0
+            val_class_loss = {classname: [] for classname in classes}  # temp store
             with torch.no_grad():
                 for val_data in testloader:
                     val_inputs, val_labels, val_sizes = val_data[0].to(device), val_data[1].to(device), val_data[2].to(device)
                     val_outputs = net(val_inputs, val_sizes)
                     loss = criterion(val_outputs, val_labels)
                     val_loss += loss.item()
+
+                    # Per-class tracking
+                    for i in range(len(val_labels)):
+                        label = val_labels[i].item()
+                        l = criterion(val_outputs[i].unsqueeze(0), val_labels[i].unsqueeze(0))
+                        val_class_loss[classes[label]].append(l.item())
+
+            # Validation phase
             val_losses.append(val_loss / len(testloader))
+            for classname in classes:
+                if val_class_loss[classname]:
+                    avg = sum(val_class_loss[classname]) / len(val_class_loss[classname])
+                else:
+                    avg = 0
+                val_loss_per_class[classname].append(avg)
 
 
 
@@ -294,7 +352,7 @@ if __name__ == "__main__":
 
         print('Finished Training')
         # Plot and save training vs validation loss
-        epochs = list(range(1, len(train_losses) + 1))
+        epochs = list(range(len(train_losses)))
         plt.figure(figsize=(10, 6))
         plt.plot(epochs, train_losses, label='Training Loss', linewidth=2)
         plt.plot(epochs, val_losses, label='Validation Loss', linewidth=2)
@@ -312,8 +370,30 @@ if __name__ == "__main__":
         plt.grid(True, linestyle='--', alpha=0.4)
         plt.legend()
         plt.tight_layout()
-        plt.savefig('loss_curve_per_class.png', dpi=300)
+        name = datetime.now().strftime("loss_curve_per_class_%Y-%m-%d_%H-%M-%S.png")
+        plt.savefig(name, dpi=300)
         plt.show()
+
+        # === Save Per-Epoch Losses to CSV ===
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        loss_csv_name = f"loss_log_{timestamp}.csv"
+        loss_csv_fields = ["epoch", "train_loss", "val_loss"] + [f"val_loss_{cls}" for cls in classes]
+
+        with open(loss_csv_name, mode='w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=loss_csv_fields)
+            writer.writeheader()
+            for epoch in range(len(train_losses)):
+                row = {
+                    "epoch": epoch,
+                    "train_loss": train_losses[epoch],
+                    "val_loss": val_losses[epoch],
+                }
+                for cls in classes:
+                    row[f"val_loss_{cls}"] = val_loss_per_class[cls][epoch]
+                writer.writerow(row)
+
+        print(f"Saved per-epoch loss log to: {loss_csv_name}")
+
 
 
         torch.save(net.state_dict(), PATH)
