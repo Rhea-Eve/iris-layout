@@ -1,6 +1,5 @@
 import argparse
 import logging
-
 import cv2
 import numpy as np
 from numpy.fft import fft2, ifft2

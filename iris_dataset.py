@@ -56,7 +56,11 @@ class Iris(VisionDataset):
         for file_name in file_list:
             file_path = os.path.join(self.root, file_name)
             with open(file_path, "rb") as f:
+                print("Loading data...")
+                print(f"Loading {file_name}...")
                 entry = pickle.load(f, encoding="latin1")
+                print("Finished loading.")
+                print(f"{len(file_list)} files to load.\n")
                 for d in entry["data"]:
                     self.data.append(d)
                 if False: # manual check data input
